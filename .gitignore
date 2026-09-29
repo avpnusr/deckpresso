@@ -1,0 +1,9 @@
+# Generated profile (install.py writes it)
+nespresso.json
+
+# Node dependency installed for the plugin on Node 20
+node_modules/
+
+# Python bytecode
+__pycache__/
+*.pyc

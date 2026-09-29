@@ -1,0 +1,53 @@
+{
+	"Name": "Nespresso Stats",
+	"Description": "Log brews and upkeep on a nespresso-stats dashboard, showing live stock / days-until-due",
+	"Author": "klein",
+	"Version": "1.1.0",
+	"Icon": "icon",
+	"Category": "Nespresso",
+	"OS": [
+		{ "Platform": "linux" },
+		{ "Platform": "mac" },
+		{ "Platform": "windows" }
+	],
+	"CodePath": "index.js",
+	"Nodejs": { "Version": "20" },
+	"Actions": [
+		{
+			"Name": "Capsule",
+			"UUID": "com.khmls.nespresso.capsule",
+			"Icon": "icon",
+			"Tooltip": "Brew this capsule and show its remaining stock",
+			"Controllers": ["Keypad"],
+			"SupportedInMultiActions": false,
+			"States": [
+				{
+					"Image": "actionDefaultImage",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom",
+					"TitleColor": "#FFFFFF",
+					"FontStyle": "Bold",
+					"FontSize": 30
+				}
+			]
+		},
+		{
+			"Name": "Upkeep",
+			"UUID": "com.khmls.nespresso.maintenance",
+			"Icon": "icon",
+			"Tooltip": "Log cleaning/descaling and show the days until it is due again",
+			"Controllers": ["Keypad"],
+			"SupportedInMultiActions": false,
+			"States": [
+				{
+					"Image": "actionDefaultImage",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom",
+					"TitleColor": "#FFFFFF",
+					"FontStyle": "Bold",
+					"FontSize": 30
+				}
+			]
+		}
+	]
+}

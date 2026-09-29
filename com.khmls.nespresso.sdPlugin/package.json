@@ -1,0 +1,10 @@
+{
+	"name": "nespresso-deck-plugin",
+	"version": "1.0.0",
+	"private": true,
+	"description": "OpenDeck action: brew a capsule and show its live nespresso-stats stock",
+	"license": "MIT",
+	"dependencies": {
+		"ws": "^8.18.0"
+	}
+}
