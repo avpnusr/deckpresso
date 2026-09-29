@@ -83,7 +83,7 @@ python3 install.py --url http://127.0.0.1:8787 --images-dir ./my-art --fill-titl
 ```
 
 Keys whose file is missing fall back to the plugin icon. The bundled artwork is
-AI-generated placeholder art, not official Nespresso assets.
+AI-generated placeholder art (see [Disclaimer](#disclaimer)).
 
 ## How it works
 
@@ -146,3 +146,9 @@ itself updates within one poll.
 - **Blank titles right after loading** — deploy with `--fill-titles`.
 - **Plugin doesn't start** — check OpenDeck's plugin log; on Node 20 run
   `npm install` in the plugin folder.
+
+## Disclaimer
+
+This repository is built and maintained with the help of AI agents. All key
+artwork in `artwork/` is AI-generated placeholder art — none of it is official
+Nespresso imagery, and it is not affiliated with or endorsed by Nespresso.
