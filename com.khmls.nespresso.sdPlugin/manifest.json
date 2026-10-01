@@ -48,6 +48,20 @@
 					"FontSize": 30
 				}
 			]
+		},
+		{
+			"Name": "Stats",
+			"UUID": "com.khmls.nespresso.stats",
+			"Icon": "icon",
+			"Tooltip": "Show a live coffee stat (today, week, spend, trends, ...)",
+			"Controllers": ["Keypad"],
+			"SupportedInMultiActions": false,
+			"States": [
+				{
+					"Image": "actionDefaultImage",
+					"ShowTitle": false
+				}
+			]
 		}
 	]
 }

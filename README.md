@@ -1,25 +1,19 @@
 # deckpresso
 
-> **Disclaimer:** this repository is written and maintained with AI coding
-> agents. Every change is reviewed by the maintainer before it lands, but expect
-> AI-generated code and docs — check anything critical yourself. All images in
-> the repo (capsule artwork and key icons) are AI-generated too; they are not
-> official Nespresso assets.
-
 An [OpenDeck](https://github.com/nekename/OpenDeck) profile generator plus a small
 custom plugin that puts your [Nespresso Stats](https://github.com/avpnusr/nespresso-stats)
 dashboard on a Stream Deck. Each capsule key logs a brew on press and shows that
-capsule's live remaining stock; two upkeep keys log cleaning / descaling and show
-the days until they are due again.
+capsule's live remaining stock; two upkeep keys log cleaning / descaling; and a
+bottom-right button opens a second page of live coffee stats.
 
 ![A 5×3 OpenDeck profile: eight Nespresso capsule keys with art and live stock
 counts (Melozio 11, Intenso 14, Fortado 8, Mexico 10, Stormio 10, Maple Pecan 25,
-Cinnamon Apple Crisp 18, Pumpkin Spice Cake 25), plus Cleaned and Descaled keys
-showing days until due](screenshot.jpg)
+Cinnamon Apple Crisp 18, Pumpkin Spice Cake 25), plus Descaled, Cleaned and a
+STATS button on the bottom row](screenshot.jpg)
 
 The deck in the picture: the top two rows are capsule keys (artwork + remaining
-stock), the bottom-right pair are the upkeep keys. Any key can point at a
-different capsule, so the layout is just a starting point.
+stock), the bottom row is Descaled, Cleaned and the **STATS** button. Any key can
+point at a different capsule, so the layout is just a starting point.
 
 ```
  Stream Deck key press ──HTTP──▶ nespresso-stats
@@ -33,11 +27,6 @@ different capsule, so the layout is just a starting point.
 - Node.js (OpenDeck ships its own; `ws` below is only needed on Node 20).
 - A reachable [nespresso-stats](https://github.com/avpnusr/nespresso-stats) instance.
 - Python 3 to run `install.py`.
-
-A great setup is a Stream Deck plugged into a Raspberry Pi running OpenDeck:
-the Pi is a cheap, always-on host that the deck and nespresso-stats share a box
-with. See [Headless / service deployments](#headless--service-deployments) for
-the Xvfb and HID bits that setup needs.
 
 ## Setup
 
@@ -67,8 +56,8 @@ the Xvfb and HID bits that setup needs.
    python3 install.py --url http://127.0.0.1:8787 --fill-titles
    ```
 
-   This writes `profiles/<device>/nespresso.json` under the OpenDeck config dir.
-   Select the **nespresso** profile in OpenDeck.
+   This writes `profiles/<device>/nespresso.json` **and** `nespresso-stats.json`
+   under the OpenDeck config dir. Select the **nespresso** profile in OpenDeck.
 
 If OpenDeck runs on another machine, pass `--config-dir` and `--device` (the
 folder under `profiles/`) instead of relying on auto-detection.
@@ -91,6 +80,22 @@ python3 install.py --url http://127.0.0.1:8787 --images-dir ./my-art --fill-titl
 Keys whose file is missing fall back to the plugin icon. The bundled artwork is
 AI-generated placeholder art, not official Nespresso assets.
 
+## The stats page
+
+The bottom-right key switches to a second profile (`nespresso-stats`) of 14 live
+tiles; its top-left key switches back. The plugin renders each tile as an SVG
+image built from `/api/state` + `/api/stats`, aggregating the metrics exactly
+like the dashboard does.
+
+![The stats profile: a COFFEE back button top-left, then today / last 7 days /
+average / spend, stock left / most brewed / running low / next clean / next
+descale, and a heatmap, 7-day bars, by-family, top-capsules and top-family
+tiles](screenshot-stats.png)
+
+Navigation uses OpenDeck's bundled **starter-pack** `switchprofile` action (only
+that plugin may switch profiles), so the two navigation keys are plain OpenDeck
+actions — the profile names are `nespresso` and `nespresso-stats`.
+
 ## How it works
 
 - On `willAppear` / settings change the plugin polls `GET /api/state` every 10 s
@@ -101,8 +106,13 @@ AI-generated placeholder art, not official Nespresso assets.
   then refreshes immediately. If the name isn't in the dashboard it skips the
   press rather than logging an unattributed brew.
 - An upkeep press posts `POST /api/maintenance` `{"task": "clean"|"descale"}`.
+- On the stats page the plugin fetches `/api/stats`, aggregates today / last-7-days /
+  average / month spend / stock-days-left / running-low / upkeep-days / a 12-week
+  heatmap / family and capsule rankings, and sends each tile as an SVG image with
+  `setImage` (the SVG is re-sent when it changes, and at least every 30 s).
 - Per-key settings: capsule key `{"capsule": "<name>", "url": "<base>"}`, upkeep
-  key `{"task": "clean"|"descale", "url": "<base>"}`. `NESPRESSO_POLL_MS`
+  key `{"task": "clean"|"descale", "url": "<base>"}`, stats key
+  `{"metric": "<id>", "url": "<base>"}` (ids in `STATS_LAYOUT`). `NESPRESSO_POLL_MS`
   overrides the poll interval.
 
 Titles are re-sent every poll, not just on change: OpenDeck ignores an unchanged
@@ -118,6 +128,7 @@ WebSocket client that Node 20 lacks (Node 22+ uses the built-in one).
                    (reads GET /api/state) -- recommended
 --images-dir DIR   folder of key artwork to copy (default: bundled artwork/)
 --out FILE         write the profile JSON here instead of installing
+--stats            with --print/--out, use the stats page instead of the main deck
 --print            print the profile instead of installing
 --config-dir DIR   OpenDeck config directory (skips auto-detection)
 --device ID        device folder under profiles/ (skips auto-detection)
@@ -150,5 +161,7 @@ itself updates within one poll.
   in nespresso-stats, or the dashboard isn't reachable from the deck machine.
 - **Press does nothing and the log says "no capsule id"** — same name mismatch.
 - **Blank titles right after loading** — deploy with `--fill-titles`.
+- **Blank stats tiles** — they render only while the stats page is shown; check
+  the plugin log (`<data-dir>/opendeck/logs/plugins/com.khmls.nespresso.sdPlugin.log`).
 - **Plugin doesn't start** — check OpenDeck's plugin log; on Node 20 run
   `npm install` in the plugin folder.

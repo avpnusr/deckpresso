@@ -23,6 +23,7 @@ which has a 176x176 PNG for every capsule in the nespresso-stats catalogue).
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import math
@@ -55,12 +56,13 @@ IMAGE_PREFIX = "images/nespresso"
 # --images-dir, so the base works out of the box.
 ARTWORK_DIR = Path(__file__).resolve().parent / "artwork"
 
-# Upkeep keys: (label, task, image, key position). Positions are explicit —
-# Cleaned on the bottom-right key, Descaled on the key to its left. The task name
-# must match the server's MAINTENANCE keys ("clean" / "descale").
+# Upkeep keys: (label, task, image, key position). Positions are explicit — the
+# bottom row is Descaled, Cleaned, then the Stats button in the bottom-right
+# slot. The task name must match the server's MAINTENANCE keys ("clean" /
+# "descale"); the image is the art file in --images-dir.
 MAINTENANCE = [
-    ("Cleaned", "clean", "cleaned.png", 14),
-    ("Descaled", "descale", "descaled.png", 13),
+    ("Descaled", "descale", "descaled.png", 12),
+    ("Cleaned", "clean", "cleaned.png", 13),
 ]
 
 # Plugin ids. Paths are relative to OpenDeck's config dir — it resolves them on
@@ -68,8 +70,27 @@ MAINTENANCE = [
 NESPRESSO_PLUGIN = "com.khmls.nespresso.sdPlugin"
 CAPSULE_UUID = "com.khmls.nespresso.capsule"
 MAINTENANCE_UUID = "com.khmls.nespresso.maintenance"
+STATS_UUID = "com.khmls.nespresso.stats"
 
-# Style of the number the plugin writes into the key title: white, bold,
+# Profile switching uses OpenDeck's bundled starter-pack action (only that plugin
+# is allowed to send switchProfile). The bottom-right key of the main deck opens
+# the stats page; the top-left key of the stats page comes back.
+STARTERPACK_PLUGIN = "com.amansprojects.starterpack.sdPlugin"
+SWITCH_PROFILE_UUID = "com.amansprojects.starterpack.switchprofile"
+STARTERPACK_ICON = f"plugins/{STARTERPACK_PLUGIN}/icons/switchProfile.png"
+PROFILE_ID = "nespresso"
+STATS_PROFILE_ID = "nespresso-stats"
+
+# Stats page layout: key position -> metric id understood by the plugin.
+STATS_LAYOUT = [
+    (1, "today"), (2, "week"), (3, "avg"), (4, "month"),
+    (5, "stock_left"), (6, "most_brewed"), (7, "running_low"),
+    (8, "next_clean"), (9, "next_descaled"),
+    (10, "heatmap"), (11, "week_bars"), (12, "by_family"),
+    (13, "top_capsules"), (14, "top_family"),
+]
+
+# Style of the number the plugin writes into a key title: white, bold,
 # bottom-middle over the artwork.
 STOCK_TEXT = {
     "show": True,
@@ -78,25 +99,34 @@ STOCK_TEXT = {
     "colour": "#FFFFFF",
     "style": "Bold",
 }
+# Stats and navigation keys carry their own SVG image, so OpenDeck draws no title.
+IMAGE_TEXT = {"show": False, "alignment": "bottom", "size": 30, "colour": "#FFFFFF", "style": "Bold"}
 
 
-def plugin_action(uuid: str, name: str, tooltip: str) -> dict:
-    icon = f"plugins/{NESPRESSO_PLUGIN}/icon.png"
+def plugin_action(uuid: str, name: str, tooltip: str, *, plugin: str = NESPRESSO_PLUGIN,
+                  icon: str | None = None, state: dict | None = None, multi: bool = False) -> dict:
+    icon = icon or f"plugins/{plugin}/icon.png"
     return {
         "name": name,
         "uuid": uuid,
-        "plugin": NESPRESSO_PLUGIN,
+        "plugin": plugin,
         "tooltip": tooltip,
         "icon": icon,
         "disable_automatic_states": False,
         "visible_in_action_list": True,
-        "supported_in_multi_actions": False,
+        "supported_in_multi_actions": multi,
         "property_inspector": "",
         "controllers": ["Keypad"],
         "encoder": None,
         # The plugin writes the number into the state title.
-        "states": [{"image": icon, **STOCK_TEXT}],
+        "states": [state or {"image": icon, **STOCK_TEXT}],
     }
+
+
+def switch_profile_action() -> dict:
+    return plugin_action(SWITCH_PROFILE_UUID, "Switch Profile", "Switch the selected profile",
+                         plugin=STARTERPACK_PLUGIN, icon=STARTERPACK_ICON,
+                         state={"image": STARTERPACK_ICON, **IMAGE_TEXT}, multi=True)
 
 
 def instance(action: dict, position: int, settings: dict, state: dict) -> dict:
@@ -110,8 +140,50 @@ def instance(action: dict, position: int, settings: dict, state: dict) -> dict:
     }
 
 
-def build_profile(url: str) -> dict:
-    size = max(15, len(CAPSULES), max(position for *_, position in MAINTENANCE) + 1)
+def _svg_tile(label: str, sub: str, body: str, accent: str) -> str:
+    font = "Arial,Helvetica,sans-serif"
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">'
+        '<stop offset="0" stop-color="#2a2a32"/><stop offset="1" stop-color="#1e1e24"/>'
+        '</linearGradient></defs>'
+        '<rect width="144" height="144" rx="18" fill="url(#g)"/>'
+        f'<rect width="144" height="3" rx="1.5" fill="{accent}"/>'
+        f'{body}'
+        f'<text x="72" y="25" text-anchor="middle" font-family="{font}" font-size="10.5" '
+        f'font-weight="bold" letter-spacing="0.5" fill="#8b8b97">{label}</text>'
+        f'<text x="72" y="130" text-anchor="middle" font-family="{font}" font-size="10.5" '
+        f'fill="#6e6e7a">{sub}</text>'
+        '</svg>'
+    )
+
+
+def _svg_data(svg: str) -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+
+
+def nav_image(kind: str) -> str:
+    """Inline SVG for a navigation key: 'stats' (bar chart) or 'coffee' (back arrow)."""
+    blue = "#6bb8ff"
+    if kind == "stats":
+        body = (f'<rect x="50" y="66" width="10" height="20" rx="2" fill="{blue}"/>'
+                f'<rect x="66" y="54" width="10" height="32" rx="2" fill="{blue}"/>'
+                f'<rect x="82" y="60" width="10" height="26" rx="2" fill="{blue}"/>')
+        label, sub = "STATS", "coffee stats"
+    else:
+        body = (f'<line x1="88" y1="76" x2="60" y2="76" stroke="{blue}" stroke-width="6"/>'
+                f'<polygon points="46,76 64,64 64,88" fill="{blue}"/>')
+        label, sub = "COFFEE", "back to selection"
+    return _svg_data(_svg_tile(label, sub, body, blue))
+
+
+def placeholder_image(metric: str) -> str:
+    """Blank tile the plugin overwrites with the live stat on its first poll."""
+    return _svg_data(_svg_tile(metric.replace("_", " ").upper(), "", "", "#6bb8ff"))
+
+
+def build_profile(url: str, stats_profile: str = STATS_PROFILE_ID) -> dict:
+    size = max(15, len(CAPSULES), max(position for *_, position in MAINTENANCE) + 1, 15)
     keys: list[dict | None] = [None] * size
 
     capsule = plugin_action(CAPSULE_UUID, "Capsule", "Brew this capsule and show its remaining stock")
@@ -123,6 +195,27 @@ def build_profile(url: str) -> dict:
     for label, task, image, position in MAINTENANCE:
         state = {"image": f"{IMAGE_PREFIX}/{image}" if image else upkeep["icon"], **STOCK_TEXT}
         keys[position] = instance(upkeep, position, {"task": task, "url": url}, state)
+
+    # Bottom-right opens the stats page.
+    keys[14] = instance(switch_profile_action(), 14, {"profile": stats_profile},
+                        {"image": nav_image("stats"), **IMAGE_TEXT})
+
+    return {"keys": keys, "sliders": [], "infobars": []}
+
+
+def build_stats_profile(url: str, profile_id: str = PROFILE_ID) -> dict:
+    size = 15
+    keys: list[dict | None] = [None] * size
+
+    # Top-left returns to the coffee selection.
+    keys[0] = instance(switch_profile_action(), 0, {"profile": profile_id},
+                       {"image": nav_image("coffee"), **IMAGE_TEXT})
+
+    stats = plugin_action(STATS_UUID, "Stats", "Show a live coffee stat",
+                          state={"image": f"plugins/{NESPRESSO_PLUGIN}/icon.png", **IMAGE_TEXT})
+    for position, metric in STATS_LAYOUT:
+        state = {"image": placeholder_image(metric), **IMAGE_TEXT}
+        keys[position] = instance(stats, position, {"metric": metric, "url": url}, state)
 
     return {"keys": keys, "sliders": [], "infobars": []}
 
@@ -193,25 +286,46 @@ def selftest() -> None:
     profile = build_profile("https://deck.test/")
     keys = [k for k in profile["keys"] if k]
     assert len(profile["keys"]) >= 15, "slots too few"
-    assert len(keys) == len(CAPSULES) + len(MAINTENANCE)
+    assert len(keys) == len(CAPSULES) + len(MAINTENANCE) + 1
     for position, key in enumerate(profile["keys"]):
-        if key:
-            assert key["context"] == f"Keypad.{position}.0", key["context"]
-            assert key["action"]["plugin"] == NESPRESSO_PLUGIN
-            assert key["settings"]["url"] == "https://deck.test/"
-            state = key["states"][0]
-            assert state["show"] is True and state["alignment"] == "bottom", state
-            assert state["colour"] == STOCK_TEXT["colour"] and state["style"] == "Bold", state
-            assert state["image"].startswith(IMAGE_PREFIX), state["image"]
+        if not key:
+            continue
+        assert key["context"] == f"Keypad.{position}.0", key["context"]
+        state = key["states"][0]
+        if key["action"]["uuid"] == SWITCH_PROFILE_UUID:
+            assert key["settings"] == {"profile": STATS_PROFILE_ID}, key["settings"]
+            assert state["show"] is False and state["image"].startswith("data:image/svg+xml"), state
+            continue
+        assert key["action"]["plugin"] == NESPRESSO_PLUGIN
+        assert key["settings"]["url"] == "https://deck.test/"
+        assert state["show"] is True and state["alignment"] == "bottom", state
+        assert state["colour"] == STOCK_TEXT["colour"] and state["style"] == "Bold", state
+        assert state["image"].startswith(IMAGE_PREFIX), state["image"]
     assert json.loads(json.dumps(profile)) == profile, "not JSON round-trippable"
 
     # one key per capsule, and every capsule carries its name
     assert sorted(k["settings"]["capsule"] for k in keys
                   if k["action"]["uuid"] == CAPSULE_UUID) == sorted(n for n, _ in CAPSULES)
-    # upkeep keys: right tasks at positions 13/14
+    # upkeep keys, then the stats button, across the bottom row
     tasks = {k["settings"]["task"]: p for p, k in enumerate(profile["keys"])
              if k and k["action"]["uuid"] == MAINTENANCE_UUID}
-    assert tasks == {"clean": 14, "descale": 13}, tasks
+    assert tasks == {"clean": 13, "descale": 12}, tasks
+    assert profile["keys"][14]["action"]["uuid"] == SWITCH_PROFILE_UUID, "stats button bottom-right"
+
+    # the stats page: back button top-left + 14 metric tiles
+    page = build_stats_profile("https://deck.test/")
+    assert len(page["keys"]) == 15 and all(page["keys"]), "stats page must fill all keys"
+    back = page["keys"][0]
+    assert back["action"]["uuid"] == SWITCH_PROFILE_UUID and back["settings"] == {"profile": PROFILE_ID}, back
+    assert back["states"][0]["image"].startswith("data:image/svg+xml"), back
+    metrics = {k["settings"]["metric"]: p for p, k in enumerate(page["keys"])
+               if k["action"]["uuid"] == STATS_UUID}
+    assert sorted(metrics) == sorted(m for _, m in STATS_LAYOUT), metrics
+    for key in (k for k in page["keys"] if k["action"]["uuid"] == STATS_UUID):
+        assert key["settings"]["url"] == "https://deck.test/"
+        assert key["states"][0]["show"] is False
+        assert key["states"][0]["image"].startswith("data:image/svg+xml"), key["states"][0]["image"]
+    assert json.loads(json.dumps(page)) == page, "stats page not JSON round-trippable"
 
     # days_until: overdue / never done -> 0, future rounds up
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -239,8 +353,8 @@ def selftest() -> None:
     finally:
         urllib.request.urlopen = original
     assert _texts(profile, CAPSULE_UUID)[0] == "0", _texts(profile, CAPSULE_UUID)
-    assert _texts(profile, MAINTENANCE_UUID)[13] == "0", "never logged -> due -> 0"
-    assert _texts(profile, MAINTENANCE_UUID)[14].isdigit(), "clean shows days left"
+    assert _texts(profile, MAINTENANCE_UUID)[12] == "0", "never logged -> due -> 0"
+    assert _texts(profile, MAINTENANCE_UUID)[13].isdigit(), "clean shows days left"
     print("selftest ok")
 
 
@@ -255,6 +369,7 @@ def main() -> None:
     parser.add_argument("--fill-titles", action="store_true",
                         help="stamp current stock and days-until-due into the profile (GET --url/api/state)")
     parser.add_argument("--out", type=Path, default=None, help="write the profile here instead")
+    parser.add_argument("--stats", action="store_true", help="with --print/--out, use the stats page instead")
     parser.add_argument("--print", action="store_true", help="print the profile instead of installing")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
@@ -264,19 +379,21 @@ def main() -> None:
         return
 
     config = args.config_dir or config_dir()
-    profile = build_profile(args.url)
+    stats_profile_id = f"{args.profile_id}-stats"
+    main_profile = build_profile(args.url, stats_profile_id)
+    page_profile = build_stats_profile(args.url, args.profile_id)
     if args.fill_titles:
         try:
-            print(f"stamped {fill_titles(profile, args.url)} titles from {args.url}")
+            print(f"stamped {fill_titles(main_profile, args.url)} titles from {args.url}")
         except Exception as error:  # noqa: BLE001 - a deploy without numbers still beats failing
             print(f"warning: could not fetch state from {args.url}: {error}", file=sys.stderr)
-    text = json.dumps(profile, indent="\t")
 
     if args.print:
-        print(text)
+        print(json.dumps(page_profile if args.stats else main_profile, indent="\t"))
         return
     if args.out:
-        args.out.write_text(text + "\n")
+        chosen = page_profile if args.stats else main_profile
+        args.out.write_text(json.dumps(chosen, indent="\t") + "\n")
         print(f"wrote {args.out}")
         return
 
@@ -288,10 +405,12 @@ def main() -> None:
             shutil.copyfile(source, target_dir / source.name)
         print(f"copied {len(images)} artwork files to {target_dir}")
     device = find_device(config, args.device)
-    target = config / "profiles" / device / f"{args.profile_id}.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text + "\n")
-    print(f"wrote {target}\nSelect the '{args.profile_id}' profile for device {device} in OpenDeck.")
+    target_dir = config / "profiles" / device
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for name, prof in ((args.profile_id, main_profile), (stats_profile_id, page_profile)):
+        (target_dir / f"{name}.json").write_text(json.dumps(prof, indent="\t") + "\n")
+        print(f"wrote {target_dir / f'{name}.json'}")
+    print(f"Select the '{args.profile_id}' profile for device {device} in OpenDeck.")
 
 
 if __name__ == "__main__":
